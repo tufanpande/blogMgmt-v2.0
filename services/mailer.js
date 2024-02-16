@@ -6,8 +6,8 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     // TODO: replace `user` and `pass` values from <https://forwardemail.net>
-    user: "",
-    pass: "",
+    user: "email",
+    pass: "APP PASSWORD",
   },
 });
 
@@ -15,7 +15,7 @@ const transporter = nodemailer.createTransport({
 const mailer=async(email )=> {
   // send mail with defined transport object
   const info = await transporter.sendMail({
-    from: '"Tufan Pandey" <tufanpande@gmail.com>', // sender address
+    from: '"Tufan Pandey" <your email.com>', // sender address
     to: email, // list of receivers
     subject: "Regestration Successful ✔", // Subject line
     html: "<b>User signUp</b>", // html body
