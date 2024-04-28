@@ -2,9 +2,13 @@ const userModel = require("./user.model");
 const { hashedPassword, comparePassword } = require("../../utils/bcrypt");
 const { mailer } = require("../../services/mailer");
 const { generateRandomToken } = require("../../utils/token");
-const { verify } = require("crypto");
+const { signJWT } = require("../../utils/token");
+
+// const { verify } = require("crypto");
+// const { error } = require("console");
 
 const register = async (payload) => {
+  delete payload.roles;
   payload.password = hashedPassword(payload.password);
   const user = await userModel.create(payload);
   if (!user) throw new Error("Registration failed");
@@ -34,11 +38,74 @@ const login = async (payload) => {
   const result = comparePassword(password, hashed);
   //if password match,then login into the system
   if (!result) throw new Error("email or password mismatched.try again  ");
-  return result;
+  //return access token
+  const userPayload = { name: user.name, email: user.email, role: user.roles };
+  const token = await signJWT(userPayload);
+  return token;
 };
 
 const getById = (_id) => {
   return userModel.findOne({ _id });
+};
+
+const getAll = async (search, page = 1, limit = 20) => {
+  const query = [];
+  if (search?.name) {
+    query.push({
+      $match: {
+        name: new RegExp(search?.name, "gi"),
+      },
+    });
+  }
+  if (search?.email) {
+    query.push({
+      $match: {
+        name: new RegExp(search?.email, "gi"),
+      },
+    });
+  }
+
+  query.push(
+    {
+      $facet: {
+        metadata: [
+          {
+            $count: "total",
+          },
+        ],
+        data: [
+          {
+            $skip: (+page - 1) * +limit,
+          },
+          {
+            $limit: +limit,
+          },
+        ],
+      },
+    },
+    {
+      $addFields: {
+        total: {
+          $arrayElemAt: ["$metadata.total", 0],
+        },
+      },
+    },
+    {
+      $project: {
+        metadata: 0,
+      },
+    }
+  );
+
+  //searching,sorting and filter with pagination
+  const result = await userModel.aggregate(query);
+
+  return {
+    data: result[0].data,
+    total: result[0].total || 0,
+    page: +page,
+    limit: +limit,
+  };
 };
 
 const updateById = (_id, payload) => {
@@ -117,10 +184,34 @@ const changePassowrd = async (payload) => {
   return "Password Updated Successfully";
 };
 
+/////////////////////////////FOR ADMIN/////////////////////
+
+const create = async (payload) => {
+  return userModel.create(payload);
+};
+const getProfile = async (_id) => {
+  return userModel.findOne({ _id });
+};
+const updateProfile = async (_id, payload) => {
+  return userModel.updateOne({ _id }, payload);
+};
+
+const blockUser = async (_id) => {
+  const user = await userModel.findOne({ _id });
+  if (!user) throw new Error("User not found");
+  const payload = { isActive: !user.isActive };
+  return userModel.updateOne({ _id }, payload);
+};
+
 module.exports = {
+  create,
+  getProfile,
+  updateProfile,
+  blockUser,
   register,
   login,
   getById,
+  getAll,
   updateById,
   generatefpToken,
   verifyFpToken,
