@@ -1,38 +1,38 @@
 require("dotenv").config();
+
+const cors = require("cors");
 const express = require("express");
-const mongoose= require("mongoose");
-const morgan= require("morgan");
+const mongoose = require("mongoose");
+const morgan = require("morgan");
 
 const indexRouter = require("./routes");
-
-const PORT= Number(process.env.PORT);
+const PORT = Number(process.env.PORT);
 
 const app = express();
-app.use(express.json());
-app.use(morgan("dev"));
-app.use(express.static("public"));
 
-
-
-mongoose.connect(process.env.DB).then(()=>{
-    console.log("Database is connected");
+mongoose.connect(process.env.DB_URL).then(() => {
+  console.log("Database connected");
 });
+
+app.use(cors());
+app.use(morgan("dev"));
+app.use(express.json()); // to allow json as request body
+app.use("/assets", express.static("public"));
+
+// Intentional delay to test loading
+// app.use((req, res, next) => {
+//   setTimeout(() => {
+//     next();
+//   }, 4000);
+// });
 
 app.use("/", indexRouter);
 
-
-
-
-
-
-
-app.use((err,req, res,next)=>{
-    err= err ? err.toString() :"something went wrong...";
-    res.status(500).json({msg: err});
-});
-app.listen(PORT,()=>{
-    console.log(`Application is running  on ${PORT}`);
+app.use((err, req, res, next) => {
+  err = err ? err.toString() : "Something went wrong";
+  res.status(500).json({ msg: err });
 });
 
-
-// 55:35
+app.listen(PORT, () => {
+  console.log(`application is running at port ${PORT}`);
+});

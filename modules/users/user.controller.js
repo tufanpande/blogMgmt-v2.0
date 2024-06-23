@@ -1,55 +1,19 @@
 const userModel = require("./user.model");
-const { hashedPassword, comparePassword } = require("../../utils/bcrypt");
-const { mailer } = require("../../services/mailer");
-const { generateRandomToken } = require("../../utils/token");
-const { signJWT } = require("../../utils/token");
-
-// const { verify } = require("crypto");
-// const { error } = require("console");
-
-const register = async (payload) => {
-  delete payload.roles;
-  payload.password = hashedPassword(payload.password);
+const { hashPassword, comparePassword } = require("../../utils/bcrypt");
+const { mail } = require("../../services/mailer");
+const { generateToken, generateRandomToken } = require("../../utils/token");
+// create
+const create = async (payload) => {
+  payload.password = hashPassword(payload.password);
   const user = await userModel.create(payload);
-  if (!user) throw new Error("Registration failed");
-
-  const result = await mailer(
-    user.email,
-    "User Signup",
-    "User registered Successfully"
-  );
-  if (result) return "User Registered";
-  return result;
+  delete user.password;
+  return user;
 };
 
-///////////////////////LOGIN/////////////////////
-
-const login = async (payload) => {
-  const { email, password } = payload;
-  if (!email || !password) throw new Error("email or password is missing");
-  //checks if user exists or not using email
-  const user = await userModel
-    .findOne({ email, isActive: true })
-    .select("+password");
-  if (!user) throw new Error("User doesn't exists");
-  //if user exist get the hashed password
-  const { password: hashed } = user;
-  //compare the passowrd.
-  const result = comparePassword(password, hashed);
-  //if password match,then login into the system
-  if (!result) throw new Error("email or password mismatched.try again  ");
-  //return access token
-  const userPayload = { name: user.name, email: user.email, role: user.roles };
-  const token = await signJWT(userPayload);
-  return token;
-};
-
-const getById = (_id) => {
-  return userModel.findOne({ _id });
-};
-
-const getAll = async (search, page = 1, limit = 20) => {
+// Read Part 1
+const list = async (search, page = 1, limit = 1) => {
   const query = [];
+
   if (search?.name) {
     query.push({
       $match: {
@@ -57,14 +21,6 @@ const getAll = async (search, page = 1, limit = 20) => {
       },
     });
   }
-  if (search?.email) {
-    query.push({
-      $match: {
-        name: new RegExp(search?.email, "gi"),
-      },
-    });
-  }
-
   query.push(
     {
       $facet: {
@@ -93,128 +49,163 @@ const getAll = async (search, page = 1, limit = 20) => {
     {
       $project: {
         metadata: 0,
+        "data.password": 0,
       },
     }
   );
-
-  //searching,sorting and filter with pagination
   const result = await userModel.aggregate(query);
-
   return {
-    data: result[0].data,
     total: result[0].total || 0,
+    data: result[0].data,
     page: +page,
     limit: +limit,
   };
 };
 
+// Read Part 2
+const getById = (_id) => {
+  return userModel.findOne({ _id });
+};
+
+// Update
 const updateById = (_id, payload) => {
   return userModel.updateOne({ _id }, payload);
 };
 
-//////////////////////GENERATE TOKEN////////////////////
-
-const generatefpToken = async (payload) => {
-  /*
-    1. in req.body (email)
-    2. check if user exist or not using email
-    3. send the email with recovery token 
-    4. store the token in the server as well
-    5. send the email to the user with token
-    5.compare the token
-    6. If token matches , ask for new password
-    7. hash the passworduser 
-    8. update the database passeord for that email
-    */
-  const { email } = payload;
-  if (!email) throw new Error("email is missing");
-  const user = await userModel.findOne({ email });
-  if (!user) throw new Error("user doesnot exists");
-  const randomToken = generateRandomToken(); //generating the token
-  await userModel.updateOne({ email }, { token: randomToken }); //store it to the database
-  const isEmailSent = await mailer(
-    user.email,
-    "Forget Password",
-    `Your token is ${randomToken}`
-  );
-  if (isEmailSent) return "forget password token sent successfully";
+// Delete
+const removeById = (_id) => {
+  return userModel.deleteOne({ _id });
 };
 
-////////////////////VERIFY TOKEN//////////////////
+const register = async (payload) => {
+  delete payload.roles;
+  payload.password = hashPassword(payload.password);
+  const user = await userModel.create(payload);
+  if (!user) throw new Error("Registration failed");
+  // email send
+  await mail(
+    user.email,
+    "Registration Completed",
+    "You are successfully registered. Thank you for registering."
+  );
+  return { success: true, message: "Registration Completed" };
+};
 
-const verifyFpToken = async (payload) => {
-  const { token, email, password } = payload;
-  if (!token || !email || !password) throw new Error("Something is missing");
-  const user = await userModel.findOne({ email });
-  if (!user) throw new Error("user doesnot exists");
-  const { token: verifyToken } = user;
-  if (token !== verifyToken) throw new Error("Invalid Token");
+const login = async (payload) => {
+  const { email, password } = payload;
+  if (!email || !password) throw new Error("Email or password is missing");
+  const user = await userModel.findOne({ email, isActive: true });
+  if (!user) throw new Error("User doesn't exists");
+  const isValidPw = comparePassword(password, user.password);
+  if (!isValidPw) throw new Error("Email or password mismatch");
+  const tokenData = { name: user.name, email: user.email, role: user.roles };
+  return generateToken(tokenData);
+};
+
+const generateFPToken = async (payload) => {
+  // email xa ki xaina?
+  const { email } = payload;
+  if (!email) throw new Error("Email doesn't exist");
+  // user exists??
+  const user = await userModel.findOne({ email, isActive: true });
+  if (!user) throw new Error("User doesn't exist");
+  // fp token utils??
+  const token = generateRandomToken();
+  // store that token in user model token
+  const updateUser = await userModel.updateOne({ email }, { token });
+  if (!updateUser) throw new Error("Something went wrong. Try again later");
+  // send that token in users email
+  await mail(email, "Forget Password Token", `Your token is ${token}`);
+  return "Forget password token generated successfully";
+};
+
+const verifyFPToken = async (payload) => {
+  const { email, token, newPassword } = payload;
+  if (!email || !token || !newPassword) throw new Error("Something is missing");
+  // User exist
+  const user = await userModel.findOne({ email, isActive: true });
+  if (!user) throw new Error("User doesn't exist");
+  // compare two tokens
+  const isValidToken = token === user.token;
+  if (!isValidToken) throw new Error("Token mismatch");
+  // user update with new password
+  const updatedUser = await userModel.updateOne(
+    { email },
+    { password: hashPassword(newPassword), token: "" }
+  );
+  if (!updatedUser) throw new Error("Process failed. Try again later");
+  // return success message
+  return "Password reset successfully";
+};
+
+const changePassword = async (payload) => {
+  const { email, oldPassword, newPassword } = payload;
+  if (!email || !oldPassword || !newPassword)
+    throw new Error("Something is missing");
+  const user = await userModel.findOne({ email, isActive: true });
+  if (!user) throw new Error("User not found");
+  const isValidOldPw = comparePassword(oldPassword, user.password);
+  if (!isValidOldPw) throw new Error("Password didn't match");
   const updateUser = await userModel.updateOne(
     { email },
-    { password: hashedPassword(password), token: "" }
+    { password: hashPassword(newPassword) }
   );
-  return "Password updated Successfully";
+  if (!updateUser) throw new Error("Try again later");
+  return "Password changed successfully";
 };
 
-//admin
-///////////////////RESET PASSWORD///////////////////////////
-
-const resetPassword = (payload) => {
-  const { userId, password } = payload;
-  if (!userId || !password) throw new Error("UserId or Password id required");
-
-  return userModel.updateOne(
-    { _id: userId },
-    { password: hashedPassword(password) }
-  );
-};
-
-///////////////////////CHANGE PASSWORD//////////////////////////
-
-const changePassowrd = async (payload) => {
-  const { email, oldpassword, newpassword } = payload;
-  if ((!email || !oldpassword, !newpassword))
-    throw new Error("Something is missing");
-  const user = await userModel.findOne({ email }).select("+password");
-  if (!user) throw new Error("user doesnot exists");
-  const isValidOldPassword = comparePassword(oldpassword, user.password);
-  if (!isValidOldPassword) throw new Error("Password didnot match");
-  const newHashPw = hashedPassword(newpassword);
-  await userModel.updateOne({ password: newHashPw });
-  return "Password Updated Successfully";
-};
-
-/////////////////////////////FOR ADMIN/////////////////////
-
-const create = async (payload) => {
-  return userModel.create(payload);
-};
-const getProfile = async (_id) => {
-  return userModel.findOne({ _id });
-};
-const updateProfile = async (_id, payload) => {
-  return userModel.updateOne({ _id }, payload);
-};
-
-const blockUser = async (_id) => {
-  const user = await userModel.findOne({ _id });
+const resetPassword = async (payload) => {
+  const { email, newPassword } = payload;
+  if (!email || !newPassword) throw new Error("Something is missing");
+  const user = await userModel.findOne({ email, isActive: true });
   if (!user) throw new Error("User not found");
-  const payload = { isActive: !user.isActive };
-  return userModel.updateOne({ _id }, payload);
+  const updateUser = await userModel.updateOne(
+    { email },
+    { password: hashPassword(newPassword) }
+  );
+  if (!updateUser) throw new Error("Try again later");
+  return "Password reset successfully";
+};
+
+const blockUser = async (payload) => {
+  const { email } = payload;
+  const user = await userModel.findOne({ email });
+  if (!user) throw new Error("User not found");
+  const status = { isActive: !user?.isActive };
+  const updateUser = await userModel
+    .findOneAndUpdate({ email }, status, {
+      new: true,
+    })
+    .select("-password");
+  if (!updateUser) throw new Error("Try again later.");
+  return {
+    msg: `User ${status?.isActive ? "unblocked" : "blocked"} Successfully`,
+    data: updateUser,
+  };
+};
+
+const getProfile = (_id) => {
+  return userModel.findOne({ _id, isActive: true }).select("-password");
+};
+
+const updateProfile = (_id, payload) => {
+  const { roles, email, password, isActive, ...rest } = payload;
+  return userModel.updateOne({ _id }, rest);
 };
 
 module.exports = {
   create,
-  getProfile,
-  updateProfile,
-  blockUser,
+  list,
+  getById,
+  updateById,
+  removeById,
   register,
   login,
-  getById,
-  getAll,
-  updateById,
-  generatefpToken,
-  verifyFpToken,
+  generateFPToken,
+  verifyFPToken,
+  changePassword,
   resetPassword,
-  changePassowrd,
+  blockUser,
+  getProfile,
+  updateProfile,
 };

@@ -1,93 +1,43 @@
-const multer =require("multer");
 const router = require("express").Router();
-const userController = require("./user.controller");
+const multer = require("multer");
+const { login, validate } = require("./user.validate");
 const { checkRole } = require("../../utils/sessionManager");
+const userController = require("./user.controller");
 
 const storage = multer.diskStorage({
-  destination: function(req, file, cb){
-    cb(null,"./public/images/user");
+  destination: (req, file, cb) => {
+    cb(null, "./public/images/users");
   },
-  filename: function (req, file, cb){
-    cd(
-      null,
-      file.fieldname +
-      "-" +
-      Date.now() +
-      "."+
-      file.organialname.split(".").pop()
+  filename: function (req, file, cb) {
+    const imageName = "image".concat(
+      "-",
+      Date.now(),
+      ".",
+      file.originalname.split(".").pop()
     );
+    cb(null, imageName);
   },
 });
 
-//HW: pmg,jpg,jpeg
-//HW : 1MB
+// HW file size each max 1MB
+// HW file type png, jpeg, jpg
+const upload = multer({ storage: storage });
 
-const upload = multer({storage:storage});
-
-
-
-router.post(
-  "/register",
-  upload.single("profilePic"),
-   async (req, res, next) => {
+// GET ALL THE USERS
+router.get("/", checkRole(["admin"]), async (req, res, next) => {
   try {
-    if(req.file){
-      req.body.profilePic = req.file.path.replace("public", "");
-
-    }
-    const result = await userController.register(req.body);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
+    const { limit, page, name, role } = req.query; // used for search, sorting and filter
+    const search = { name, role };
+    // Database Operation
+    const result = await userController.list(search, page, limit);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
   }
 });
 
-router.post("/login", async (req, res, next) => {
-  try {
-    const result = await userController.login(req.body);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post("/generate-fp-token", async (req, res, next) => {
-  try {
-    const result = await userController.generatefpToken(req.body);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post("/validate-fp-token", async (req, res, next) => {
-  try {
-    const result = await userController.verifyFpToken(req.body);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// router.post("/reset-pass", checkRole(["admin"]), async (req, res, next) => {
-//   try {
-//     const result = await userController.resetPassword(req.body);
-//     res.json({ msg: result });
-//   } catch (e) {
-//     next(e);
-//   }
-// });
-
-router.post("/change-pass", async (req, res, next) => {
-  try {
-    const result = await userController.changePassowrd(req.body);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
-  }
-});
-
-router.post("/", checkRole(["admin"]), async (req, res, next) => {
+// ADD NEW USER (Admin)
+router.post("/", checkRole(["admin"]), validate, async (req, res, next) => {
   try {
     const result = await userController.create(req.body);
     res.json({ data: result });
@@ -96,49 +46,153 @@ router.post("/", checkRole(["admin"]), async (req, res, next) => {
   }
 });
 
-router.get("/get-profile", checkRole(["user"]), async (req, res, next) => {
-  try {
-    const result = await userController.getProfile(req.currentUser);
-    res.json({ data: result });
-  } catch (e) {
-    next(e);
+// REGISTER USER
+router.post(
+  "/register",
+  upload.single("pictureUrl"),
+  validate,
+  async (req, res, next) => {
+    try {
+      if (req.file) {
+        req.body.pictureUrl = req.file.path.replace("public", "");
+      }
+      const result = await userController.register(req.body);
+      res.json({ data: result });
+    } catch (e) {
+      next(e);
+    }
   }
-});
-router.get("/", checkRole(["admin"]), async (req, res, next) => {
+);
+
+// LOGIN USER
+router.post("/login", login, async (req, res, next) => {
   try {
-    const { name, page, limit } = req.query;
-    const search = { name };
-    const result = await userController.getAll(search, page, limit);
-    res.json({ msg: result });
+    const result = await userController.login(req.body);
+    res.json({ data: result });
   } catch (e) {
     next(e);
   }
 });
 
-router.put("/update-profile", checkRole(["admin"]), async (req, res, next) => {
+// LOGIN USER
+router.post("/generate-fp-token", async (req, res, next) => {
   try {
-    const result = await userController.updateProfile(
-      req.currentUser,
-      req.body
-    );
+    const result = await userController.generateFPToken(req.body);
     res.json({ data: result });
   } catch (e) {
     next(e);
   }
 });
-router.get("/:id", async (req, res, next) => {
+
+router.post("/verify-fp-token", async (req, res, next) => {
   try {
+    const result = await userController.verifyFPToken(req.body);
+    res.json({ data: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post(
+  "/change-password",
+  checkRole(["admin", "user"]),
+  async (req, res, next) => {
+    try {
+      const result = await userController.changePassword(req.body);
+      res.json({ data: result });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.post("/reset-password", checkRole(["admin"]), async (req, res, next) => {
+  try {
+    const result = await userController.resetPassword(req.body);
+    res.json({ data: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.patch("/block-user", checkRole(["admin"]), async (req, res, next) => {
+  try {
+    const result = await userController.blockUser(req.body);
+    res.json({ data: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// GET MY PROFILE
+router.get(
+  "/get-profile",
+  checkRole(["admin", "user"]),
+  async (req, res, next) => {
+    try {
+      const result = await userController.getProfile(req.currentUser);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// UPDATE MY PROFILE
+router.put(
+  "/update-profile",
+  checkRole(["admin", "user"]),
+  async (req, res, next) => {
+    try {
+      const result = await userController.updateProfile(
+        req.currentUser,
+        req.body
+      );
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET ONE USER
+router.get("/:id", checkRole(["admin"]), async (req, res, next) => {
+  try {
+    // Database Operation
     const result = await userController.getById(req.params.id);
-    res.json({ msg: result });
-  } catch (e) {
-    next(e);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
   }
 });
 
+// UPDATE SINGLE USER FOR MORE THAN 2 FIELDS
 router.put("/:id", async (req, res, next) => {
   try {
+    // Database Operation
     const result = await userController.updateById(req.params.id, req.body);
-    res.json({ msg: result });
+    res.json({ data: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// UPDATE SINGLE USER FOR SINGLE FIELD
+router.patch("/:id", async (req, res, next) => {
+  try {
+    // Database Operation
+    const result = await userController.updateById(req.params.id, req.body);
+    res.json({ data: result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// DELETE SINGLE USER
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const result = await userController.removeById(req.params.id);
+    res.json({ data: result });
   } catch (e) {
     next(e);
   }
